@@ -52,27 +52,31 @@ def monitor_mod_log():
 
 # Handle moderation action
 def handle_mod_action(action):
-  mod = action._mod
-  author = action.target_author
-  parent = reddit.submission(id=action.target_fullname.split("_", 1)[1])
-  flair = parent.link_flair_template_id
+  action_prefix = action.target_fullname.split("_", 1)[0]
+  action_id = action.target_fullname.split("_", 1)[1]
 
-  for item in FLAIRCOMMENTS:
-    if item['flair_id'] == flair:
-      parent.mod.flair(text=item['flair_text'])
-      comment = parent.reply(item['template'].substitute(username=author, submission=parent.title))
-      comment.mod.distinguish(how='yes', sticky=True)
-      parent.mod.remove()
-      comment.mod.approve()
+  if action_prefix == 't3':
+    mod = action._mod
+    author = action.target_author
+    parent = reddit.submission(id=action_id)
+    flair = parent.link_flair_template_id
 
-      if 'usernote' in item:
-        note = puni.Note(author, item['usernote'], mod=mod, link=parent.url, warning='spamwatch')
-        usernotes.add_note(note)
-        logger.info('Usernote added.')
+    for item in FLAIRCOMMENTS:
+      if item['flair_id'] == flair:
+        parent.mod.flair(text=item['flair_text'])
+        comment = parent.reply(item['template'].substitute(username=author, submission=parent.title))
+        comment.mod.distinguish(how='yes', sticky=True)
+        parent.mod.remove()
+        comment.mod.approve()
 
-      discord_removal_msg(parent, mod)
+        if 'usernote' in item:
+          note = puni.Note(author, item['usernote'], mod=mod, link=parent.url, warning='spamwatch')
+          usernotes.add_note(note)
+          logger.info('Usernote added.')
 
-      logger.info('{} removed a post with flair: {}'.format(mod, item['flair_text']))
+        discord_removal_msg(parent, mod)
+
+        logger.info('{} removed a post with flair: {}'.format(mod, item['flair_text']))
 
 
 # Handle automoderator update
