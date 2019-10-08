@@ -114,8 +114,7 @@ def initialize():
   global slack_client
 
   try:
-    os.makedirs('../logs', exist_ok=True)
-    logging.basicConfig(filename='../logs/' + str(round(time.time())) + '.log',level=logging.INFO)
+    logging.basicConfig(level=logging.INFO)
   except Exception as e:
     logger.error('Error creating log directory or logging.')
     print(e)
