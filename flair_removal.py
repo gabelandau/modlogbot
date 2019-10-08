@@ -1,4 +1,4 @@
-import constants, praw, os, time, datetime, sys, logging, math, puni
+import constants, praw, os, time, datetime, sys, logging, math, puni, slack
 from puni import Note
 from dhooks import Webhook, Embed
 from loguru import logger
@@ -12,11 +12,14 @@ USER_AGENT        = constants.USER_AGENT
 SUBREDDIT         = constants.SUBREDDIT
 FLAIRCOMMENTS     = constants.FLAIRCOMMENTS
 DISCORDHOOK       = constants.DISCORD_HOOK
+SLACK_TOKEN       = constants.SLACK_TOKEN
+CHECKAUTOMOD      = constants.CHECKAUTOMOD
 
 reddit = None
 subreddit = None
 pushshift = None
 usernotes = None
+slack_client = None
 
 ###########################################
 # Main function
@@ -40,6 +43,8 @@ def monitor_mod_log():
     for action in praw.models.util.stream_generator(reddit.subreddit(SUBREDDIT).mod.log, skip_existing=True, attribute_name="id"):
       if action.action == 'editflair' and not action._mod == CLIENT_USERNAME:
         handle_mod_action(action)
+      elif CHECKAUTOMOD and action.action == 'wikirevise' and action.details == 'Updated AutoModerator configuration':
+        handle_automod_action(action)
   except Exception as e:
     logger.warning(e)
     pass
@@ -70,6 +75,19 @@ def handle_mod_action(action):
       logger.info('{} removed a post with flair: {}'.format(mod, item['flair_text']))
 
 
+# Handle automoderator update
+def handle_automod_action(action):
+  mod = action._mod
+
+  slack_client.chat_postMessage(
+    channel="GKW11PN72",
+    link_names=True,
+    text="<!channel>, /u/%s updated AutoMod configuration." % (mod)
+  )
+  
+  logger.info('{} updated AutoMod configuration.'.format(mod))
+
+
 ###########################################
 # Send Discord removal message
 ###########################################
@@ -93,6 +111,7 @@ def initialize():
   global pushshift
   global subreddit
   global usernotes
+  global slack_client
 
   try:
     os.makedirs('../logs', exist_ok=True)
@@ -107,6 +126,14 @@ def initialize():
   except (Exception) as e:
     logger.error('Error initializing reddit/subreddit instances.')
     return False
+
+  if CHECKAUTOMOD:
+    try:
+      slack_client = slack.WebClient(token=SLACK_TOKEN)
+    except (Exception) as e:
+      print(e)
+      logger.error('Error initializing slack instances.')
+      return False
 
   try:
     usernotes = puni.UserNotes(reddit, reddit.subreddit(SUBREDDIT))

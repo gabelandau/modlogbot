@@ -24,6 +24,8 @@ CLIENT_USERNAME   = 'changeme'
 CLIENT_PASSWORD   = 'changeme'
 USER_AGENT        = "FlairBot, a bot by /u/kellysama."
 DISCORD_HOOK      = "changeme"
+SLACK_TOKEN       = "changeme"
+CHECKAUTOMOD      = False
 
 # Comments and flair IDs. Make sure you use the $username and $submission fields, or edit the source code.
 FLAIRCOMMENTS = [
