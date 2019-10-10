@@ -1,165 +1,205 @@
-import constants, praw, os, time, datetime, sys, logging, math, puni, slack
+import constants
+import praw
+import os
+import time
+import datetime
+import sys
+import logging
+import math
+import puni
+import slack
+
 from puni import Note
 from dhooks import Webhook, Embed
 from loguru import logger
 from sys import stdout
 
-CLIENT_ID         = constants.CLIENT_ID
-CLIENT_SECRET     = constants.CLIENT_SECRET
-CLIENT_USERNAME   = constants.CLIENT_USERNAME
-CLIENT_PASSWORD   = constants.CLIENT_PASSWORD
-USER_AGENT        = constants.USER_AGENT
-SUBREDDIT         = constants.SUBREDDIT
-FLAIRCOMMENTS     = constants.FLAIRCOMMENTS
-DISCORDHOOK       = constants.DISCORD_HOOK
-SLACK_TOKEN       = constants.SLACK_TOKEN
-CHECKAUTOMOD      = constants.CHECKAUTOMOD
 
-reddit = None
-subreddit = None
-pushshift = None
-usernotes = None
-slack_client = None
+"""
+Static Classes
 
-###########################################
-# Main function
-###########################################
-def main():
-  if not initialize():
-    sys.exit()
-
-  startup()
-  monitor_mod_log()
+Settings, SlackClient, DiscordClient, and Reddit
+"""
+class Settings:
+  check_auto_mod = None
+  flairs = None
 
 
-###########################################
-# Monitor moderation log
-###########################################
-def monitor_mod_log():
-  logger.info('Starting mod log scan...')
-      
-  # Start scanning mod log
-  try:
-    for action in praw.models.util.stream_generator(reddit.subreddit(SUBREDDIT).mod.log, skip_existing=True, attribute_name="id"):
-      if action.action == 'editflair' and not action._mod == CLIENT_USERNAME:
-        handle_mod_action(action)
-      elif CHECKAUTOMOD and action.action == 'wikirevise' and action.details == 'Updated AutoModerator configuration':
-        handle_automod_action(action)
-  except Exception as e:
-    logger.warning(e)
-    pass
+class SlackClient:
+  token = None
+  client = None
+
+  @staticmethod
+  def notify_automod_update(action):
+    mod = action._mod
+
+    SlackClient.client.chat_postMessage(
+      channel="GKW11PN72",
+      link_names=True,
+      text="<!channel>, /u/%s updated AutoMod configuration." % (mod)
+    )
+    
+    logger.info('%s updated AutoMod configuration.' % (mod))
 
 
-# Handle moderation action
-def handle_mod_action(action):
-  action_prefix = action.target_fullname.split("_", 1)[0]
-  action_id = action.target_fullname.split("_", 1)[1]
+class DiscordClient:
+  hook = None
 
-  if action_prefix == 't3':
+  @staticmethod
+  def discord_removal_msg(parent, mod):
+    embed = Embed(title='Moderator Removed Submission')
+    embed.add_field(name='Submission', value='[%s](http://reddit.com%s)' % (parent.title, parent.permalink), inline=False)
+    embed.add_field(name='Author', value='[%s](http://reddit.com/u/%s)' % (parent.author.name, parent.author.name), inline=False)
+    embed.add_field(name='Flair Used', value=parent.link_flair_text, inline=False)
+    embed.add_field(name='Details', value="%d point(s), %d comments" % (parent.score, len(parent.comments)))
+    embed.add_field(name='Submitted On', value=time.strftime('%m/%d/%Y %H:%M GMT', time.gmtime(parent.created_utc)), inline=False)
+    embed.add_field(name='Action Taken By', value='[%s](http://reddit.com/u/%s)' % (mod, mod), inline=False)
+
+    Webhook(DiscordClient.hook).send(embed=embed)
+
+
+class RedditClient:
+  credentials = None
+  reddit = None
+  subreddit = None
+  usernotes = None
+
+  @staticmethod
+  def monitor_mod_log():
+    logger.info('Starting mod log scan for /r/%s...' % (RedditClient.subreddit))
+        
     try:
-      mod = action._mod
-      author = action.target_author
-      parent = reddit.submission(id=action_id)
-      flair = parent.link_flair_template_id
-
-      for item in FLAIRCOMMENTS:
-        if item['flair_id'] == flair:
-          parent.mod.flair(text=item['flair_text'])
-          comment = parent.reply(item['template'].substitute(username=author, submission=parent.title))
-          comment.mod.distinguish(how='yes', sticky=True)
-          parent.mod.remove()
-          comment.mod.approve()
-
-          if 'usernote' in item:
-            note = puni.Note(author, item['usernote'], mod=mod, link=parent.url, warning='spamwatch')
-            usernotes.add_note(note)
-            logger.info('Usernote added.')
-
-          discord_removal_msg(parent, mod)
-
-          logger.info('{} removed a post with flair: {}'.format(mod, item['flair_text']))
+      for action in praw.models.util.stream_generator(
+        RedditClient.reddit.subreddit(RedditClient.subreddit).mod.log,
+        skip_existing=True,
+        attribute_name="id"
+      ):
+        if action.action == 'editflair' and not action._mod == RedditClient.credentials['username']:
+          RedditClient.handle_mod_action(action)
+        elif (
+          Settings.check_auto_mod and
+          action.action == 'wikirevise' and
+          action.details == 'Updated AutoModerator configuration'
+        ):
+          SlackClient.notify_automod_update(action)
     except Exception as e:
+      logger.warning(e)
       pass
 
-# Handle automoderator update
-def handle_automod_action(action):
-  mod = action._mod
+  @staticmethod
+  def handle_mod_action(action):
+    action_prefix = action.target_fullname.split("_", 1)[0]
+    action_id = action.target_fullname.split("_", 1)[1]
 
-  slack_client.chat_postMessage(
-    channel="GKW11PN72",
-    link_names=True,
-    text="<!channel>, /u/%s updated AutoMod configuration." % (mod)
-  )
-  
-  logger.info('{} updated AutoMod configuration.'.format(mod))
+    if action_prefix == 't3':
+      try:
+        mod = action._mod
+        author = action.target_author
+        parent = RedditClient.reddit.submission(id=action_id)
+        flair = parent.link_flair_template_id
+
+        for item in Settings.flairs:
+          if item['flair_id'] == flair:
+            parent.mod.flair(text=item['flair_text'])
+            comment = parent.reply(
+              item['template'].substitute(username=author, submission=parent.title)
+            )
+            comment.mod.distinguish(how='yes', sticky=True)
+            parent.mod.remove()
+            comment.mod.approve()
+
+            if 'usernote' in item:
+              note = puni.Note(author, item['usernote'], mod=mod, link=parent.url, warning='spamwatch')
+              RedditClient.usernotes.add_note(note)
+              logger.info('Usernote added.')
+
+            DiscordClient.discord_removal_msg(parent, mod)
+
+            logger.info('{} removed a post with flair: {}'.format(mod, item['flair_text']))
+      except Exception as e:
+        pass
 
 
-###########################################
-# Send Discord removal message
-###########################################
-def discord_removal_msg(parent, mod):
-  embed = Embed(title='Moderator Removed Submission')
-  embed.add_field(name='Submission', value='[%s](http://reddit.com%s)' % (parent.title, parent.permalink), inline=False)
-  embed.add_field(name='Author', value='[%s](http://reddit.com/u/%s)' % (parent.author.name, parent.author.name), inline=False)
-  embed.add_field(name='Flair Used', value=parent.link_flair_text, inline=False)
-  embed.add_field(name='Details', value="%d point(s), %d comments" % (parent.score, len(parent.comments)))
-  embed.add_field(name='Submitted On', value=time.strftime('%m/%d/%Y %H:%M GMT', time.gmtime(parent.created_utc)), inline=False)
-  embed.add_field(name='Action Taken By', value='[%s](http://reddit.com/u/%s)' % (mod, mod), inline=False)
+"""
+Root Level Methods
 
-  Webhook(DISCORDHOOK).send(embed=embed)
-
-
-###########################################
-# Initialize bot & variables
-###########################################
+Startup, Initialize, and __main__
+"""
 def initialize():
-  global reddit
-  global pushshift
-  global subreddit
-  global usernotes
-  global slack_client
+  try:
+    RedditClient.credentials = {
+      'client_id': constants.CLIENT_ID,
+      'secret': constants.CLIENT_SECRET,
+      'username': constants.CLIENT_USERNAME,
+      'password': constants.CLIENT_PASSWORD,
+      'agent': constants.USER_AGENT
+    }
+
+    RedditClient.subreddit = constants.SUBREDDIT
+
+    Settings.flairs = constants.FLAIRCOMMENTS
+    Settings.check_auto_mod = constants.CHECKAUTOMOD
+
+    SlackClient.token = constants.SLACK_TOKEN
+    DiscordClient.hook = constants.DISCORD_HOOK
+  except Exception as e:
+    logger.error('Error accessing configuration data.')
+    logger.error(e)
+    return False
 
   try:
     logging.basicConfig(level=logging.INFO)
   except Exception as e:
     logger.error('Error creating log directory or logging.')
-    print(e)
+    logger.error(e)
     return False
 
   try:
-    reddit = praw.Reddit(client_id=CLIENT_ID, client_secret=CLIENT_SECRET, user_agent=USER_AGENT, username=CLIENT_USERNAME, password=CLIENT_PASSWORD)
+    RedditClient.reddit = praw.Reddit(
+      client_id=RedditClient.credentials['client_id'],
+      client_secret=RedditClient.credentials['secret'],
+      user_agent=RedditClient.credentials['agent'],
+      username=RedditClient.credentials['username'],
+      password=RedditClient.credentials['password']
+    )
   except (Exception) as e:
     logger.error('Error initializing reddit/subreddit instances.')
+    logger.error(e)
     return False
 
-  if CHECKAUTOMOD:
+  if Settings.check_auto_mod:
     try:
-      slack_client = slack.WebClient(token=SLACK_TOKEN)
+      SlackClient.client = slack.WebClient(token=SlackClient.token)
     except (Exception) as e:
-      print(e)
       logger.error('Error initializing slack instances.')
+      logger.error(e)
       return False
 
   try:
-    usernotes = puni.UserNotes(reddit, reddit.subreddit(SUBREDDIT))
+    RedditClient.usernotes = puni.UserNotes(
+      RedditClient.reddit,
+      RedditClient.reddit.subreddit(RedditClient.subreddit)
+    )
   except (Exception) as e:
-    print(e)
     logger.error('Error initializing usernotes instances.')
+    logger.error(e)
     return False
 
   return True
 
 
-###########################################
-# Print main menu
-###########################################
 def startup():
   logger.add(stdout, format="{time:HH:mm:ss} | {message}")
-  logger.info('Starting {}'.format(USER_AGENT))
+  logger.info('Starting {}'.format(RedditClient.credentials['agent']))
 
 
-###########################################
-# Execute main method
-###########################################
+def main():
+  if not initialize():
+    sys.exit()
+
+  startup()
+  RedditClient.monitor_mod_log()
+
+
 if __name__ == "__main__":
   main()
