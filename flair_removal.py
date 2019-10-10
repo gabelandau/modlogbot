@@ -30,7 +30,7 @@ class SlackClient:
   client = None
 
   @staticmethod
-  def handle_automod_action(action):
+  def notify_automod_update(action):
     mod = action._mod
 
     SlackClient.client.chat_postMessage(
@@ -73,7 +73,7 @@ class RedditClient:
         if action.action == 'editflair' and not action._mod == RedditClient.credentials['username']:
           RedditClient.handle_mod_action(action)
         elif Settings.check_auto_mod and action.action == 'wikirevise' and action.details == 'Updated AutoModerator configuration':
-          SlackClient.handle_automod_action(action)
+          SlackClient.notify_automod_update(action)
     except Exception as e:
       logger.warning(e)
       pass
@@ -133,15 +133,15 @@ def initialize():
     SlackClient.token = constants.SLACK_TOKEN
     DiscordClient.hook = constants.DISCORD_HOOK
   except Exception as e:
-    print(e)
     logger.error('Error accessing configuration data.')
+    logger.error(e)
     return False
 
   try:
     logging.basicConfig(level=logging.INFO)
   except Exception as e:
     logger.error('Error creating log directory or logging.')
-    print(e)
+    logger.error(e)
     return False
 
   try:
@@ -153,24 +153,23 @@ def initialize():
       password=RedditClient.credentials['password']
     )
   except (Exception) as e:
-    print(RedditClient.credentials['client_id'])
-    print(e)
     logger.error('Error initializing reddit/subreddit instances.')
+    logger.error(e)
     return False
 
   if Settings.check_auto_mod:
     try:
       SlackClient.client = slack.WebClient(token=SlackClient.token)
     except (Exception) as e:
-      print(e)
       logger.error('Error initializing slack instances.')
+      logger.error(e)
       return False
 
   try:
     RedditClient.usernotes = puni.UserNotes(RedditClient.reddit, RedditClient.reddit.subreddit(RedditClient.subreddit))
   except (Exception) as e:
-    print(e)
     logger.error('Error initializing usernotes instances.')
+    logger.error(e)
     return False
 
   return True
