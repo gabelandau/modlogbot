@@ -39,7 +39,7 @@ class SlackClient:
       text="<!channel>, /u/%s updated AutoMod configuration." % (mod)
     )
     
-    logger.info('{} updated AutoMod configuration.'.format(mod))
+    logger.info('%s updated AutoMod configuration.' % (mod))
 
 
 class DiscordClient:
@@ -69,10 +69,18 @@ class RedditClient:
     logger.info('Starting mod log scan for /r/%s...' % (RedditClient.subreddit))
         
     try:
-      for action in praw.models.util.stream_generator(RedditClient.reddit.subreddit(RedditClient.subreddit).mod.log, skip_existing=True, attribute_name="id"):
+      for action in praw.models.util.stream_generator(
+        RedditClient.reddit.subreddit(RedditClient.subreddit).mod.log,
+        skip_existing=True,
+        attribute_name="id"
+      ):
         if action.action == 'editflair' and not action._mod == RedditClient.credentials['username']:
           RedditClient.handle_mod_action(action)
-        elif Settings.check_auto_mod and action.action == 'wikirevise' and action.details == 'Updated AutoModerator configuration':
+        elif (
+          Settings.check_auto_mod and
+          action.action == 'wikirevise' and
+          action.details == 'Updated AutoModerator configuration'
+        ):
           SlackClient.notify_automod_update(action)
     except Exception as e:
       logger.warning(e)
@@ -93,7 +101,9 @@ class RedditClient:
         for item in Settings.flairs:
           if item['flair_id'] == flair:
             parent.mod.flair(text=item['flair_text'])
-            comment = parent.reply(item['template'].substitute(username=author, submission=parent.title))
+            comment = parent.reply(
+              item['template'].substitute(username=author, submission=parent.title)
+            )
             comment.mod.distinguish(how='yes', sticky=True)
             parent.mod.remove()
             comment.mod.approve()
@@ -166,7 +176,10 @@ def initialize():
       return False
 
   try:
-    RedditClient.usernotes = puni.UserNotes(RedditClient.reddit, RedditClient.reddit.subreddit(RedditClient.subreddit))
+    RedditClient.usernotes = puni.UserNotes(
+      RedditClient.reddit,
+      RedditClient.reddit.subreddit(RedditClient.subreddit)
+    )
   except (Exception) as e:
     logger.error('Error initializing usernotes instances.')
     logger.error(e)
